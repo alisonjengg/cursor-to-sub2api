@@ -1,0 +1,16 @@
+services:
+  proxy:
+    build: .
+    environment:
+      UPSTREAM_URL: ${UPSTREAM_URL:?Set UPSTREAM_URL in .env or the shell}
+      LOG_REQUEST_BODY: ${LOG_REQUEST_BODY:-false}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-67108864}
+    ports:
+      - "18081:8080"
+    healthcheck:
+      test: ["CMD", "/cursor-to-sub2api", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
