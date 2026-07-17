@@ -1,6 +1,11 @@
 # cursor-to-sub2api
 
-A small reverse proxy for routing Cursor's OpenAI-compatible requests to a Sub2API-compatible upstream. For `POST /v1/chat/completions`, it removes the top-level `user` field before forwarding the JSON request. Other request paths and response streams are proxied unchanged.
+A small reverse proxy for routing Cursor's OpenAI-compatible requests to a Sub2API-compatible upstream. It rewrites two request shapes before forwarding:
+
+- `POST /v1/chat/completions` — removes the top-level `user` field.
+- `POST /v1/responses` — truncates any `call_id` longer than 64 characters (the limit many OpenAI-compatible upstreams enforce). Truncation is deterministic, so paired `function_call` / `function_call_output` ids stay equal.
+
+Other request paths and response streams are proxied unchanged.
 
 ## Configuration
 

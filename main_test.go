@@ -55,6 +55,37 @@ func TestProxyLeavesOtherPathsUnchanged(t *testing.T) {
 	}
 }
 
+func TestProxyTruncatesLongCallIDsInResponses(t *testing.T) {
+	const longID = "call_0123456789012345678901234567890123456789012345678901234567890123456789" // 74 chars
+	var received map[string]any
+	handler := testProxyHandler(t, func(r *http.Request) *http.Response {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode upstream body: %v", err)
+		}
+		return testResponse(http.StatusOK, "")
+	})
+	body := `{"model":"m","input":[` +
+		`{"type":"function_call","call_id":"` + longID + `","name":"f","arguments":"{}"},` +
+		`{"type":"function_call_output","call_id":"` + longID + `","output":"ok"}]}`
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+
+	input, ok := received["input"].([]any)
+	if !ok || len(input) != 2 {
+		t.Fatalf("unexpected input: %#v", received["input"])
+	}
+	call := input[0].(map[string]any)["call_id"].(string)
+	output := input[1].(map[string]any)["call_id"].(string)
+	if len(call) != maxCallIDLen {
+		t.Fatalf("call_id length = %d, want %d", len(call), maxCallIDLen)
+	}
+	if call != output {
+		t.Fatalf("paired call_ids diverged: %q vs %q", call, output)
+	}
+	if call != longID[:maxCallIDLen] {
+		t.Fatalf("call_id = %q, want prefix of original", call)
+	}
+}
+
 func TestProxyRejectsOversizedBody(t *testing.T) {
 	upstreamCalled := false
 	handler := testProxyHandler(t, func(r *http.Request) *http.Response {

@@ -21,6 +21,7 @@ import (
 )
 
 const defaultMaxBodyBytes int64 = 64 << 20 // 64 MiB
+const maxCallIDLen = 64                     // OpenAI-compatible upstreams reject call_id longer than this
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
@@ -163,6 +164,16 @@ func inspectAndRestoreBody(w http.ResponseWriter, r *http.Request, maxBodyBytes 
 		}
 	}
 
+	if isResponsesRequest(r) {
+		truncatedBody, count, err := truncateCallIDsInBody(body, maxCallIDLen)
+		if err != nil {
+			log.Printf("call_id truncation skipped path=%s error=%v", r.URL.Path, err)
+		} else if count > 0 {
+			log.Printf("call_id truncation path=%s truncated=%d max_len=%d", r.URL.Path, count, maxCallIDLen)
+			body = truncatedBody
+		}
+	}
+
 	if len(body) > 0 {
 		logRequestBodyMetadata(r, body)
 		if logRequestBody {
@@ -181,6 +192,53 @@ func inspectAndRestoreBody(w http.ResponseWriter, r *http.Request, maxBodyBytes 
 
 func isChatCompletionsRequest(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions"
+}
+
+func isResponsesRequest(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.URL.Path == "/v1/responses"
+}
+
+// truncateCallIDsInBody shortens every call_id longer than maxLen so upstreams
+// that enforce the 64-char limit accept Cursor's Responses API requests. The
+// truncation is deterministic, so paired function_call / function_call_output
+// ids stay equal after shortening.
+func truncateCallIDsInBody(body []byte, maxLen int) ([]byte, int, error) {
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, 0, err
+	}
+	count := truncateCallIDs(payload, maxLen)
+	if count == 0 {
+		return body, 0, nil
+	}
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, count, nil
+}
+
+func truncateCallIDs(node any, maxLen int) int {
+	count := 0
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			// call_ids are ASCII, so byte slicing is safe.
+			if key == "call_id" {
+				if s, ok := child.(string); ok && len(s) > maxLen {
+					value[key] = s[:maxLen]
+					count++
+					continue
+				}
+			}
+			count += truncateCallIDs(child, maxLen)
+		}
+	case []any:
+		for _, child := range value {
+			count += truncateCallIDs(child, maxLen)
+		}
+	}
+	return count
 }
 
 func removeTopLevelJSONKeys(body []byte, keys ...string) ([]byte, bool, error) {
