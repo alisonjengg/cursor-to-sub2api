@@ -301,12 +301,11 @@ func newReverseProxy(upstream *url.URL) *httputil.ReverseProxy {
 	proxy.Director = func(r *http.Request) {
 		originalDirector(r)
 		r.Host = upstream.Host
-		// Do not leak the client's IP to the upstream: drop every forwarding
-		// header that carries it so the upstream only sees this server's address.
-		// Setting X-Forwarded-For to nil also stops ReverseProxy from re-adding it.
-		r.Header["X-Forwarded-For"] = nil
-		for _, header := range []string{"X-Real-Ip", "X-Client-Ip", "Cf-Connecting-Ip", "True-Client-Ip", "X-Forwarded-Host", "Forwarded"} {
-			r.Header.Del(header)
+		// Forward the real visitor IP so the upstream records the client, not
+		// this server. clientIP prefers Cf-Connecting-Ip behind Cloudflare.
+		if ip := clientIP(r); ip != "" {
+			r.Header.Set("X-Forwarded-For", ip)
+			r.Header.Set("X-Real-Ip", ip)
 		}
 		r.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 	}
@@ -342,6 +341,11 @@ func forwardedProto(r *http.Request) string {
 }
 
 func clientIP(r *http.Request) string {
+	// Cloudflare sets Cf-Connecting-Ip to the true client IP; it cannot be
+	// spoofed past Cloudflare the way a client-supplied X-Forwarded-For can.
+	if value := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); value != "" {
+		return value
+	}
 	if value := r.Header.Get("X-Forwarded-For"); value != "" {
 		parts := strings.Split(value, ",")
 		return strings.TrimSpace(parts[0])

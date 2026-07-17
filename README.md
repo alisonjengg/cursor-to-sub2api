@@ -7,7 +7,7 @@ A small reverse proxy for routing Cursor's OpenAI-compatible requests to a Sub2A
 
 Truncation is deterministic, so ids that must match within a request (`tool_calls[].id`/`tool_call_id`, or `function_call`/`function_call_output` `call_id`) stay equal. This satisfies upstreams that enforce the 64-char id limit.
 
-It also strips client-IP forwarding headers (`X-Forwarded-For`, `Cf-Connecting-Ip`, `X-Real-Ip`, `True-Client-Ip`, `X-Forwarded-Host`, `Forwarded`) so the upstream sees only this server's address, not the original client's.
+It forwards the real visitor IP to the upstream via `X-Forwarded-For` and `X-Real-Ip`. Behind Cloudflare the visitor IP is taken from `Cf-Connecting-Ip` (not spoofable past Cloudflare).
 
 Other request paths and response streams are proxied unchanged.
 
