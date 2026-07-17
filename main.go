@@ -164,7 +164,7 @@ func inspectAndRestoreBody(w http.ResponseWriter, r *http.Request, maxBodyBytes 
 		}
 	}
 
-	if isResponsesRequest(r) {
+	if isChatCompletionsRequest(r) || isResponsesRequest(r) {
 		truncatedBody, count, err := truncateCallIDsInBody(body, maxCallIDLen)
 		if err != nil {
 			log.Printf("call_id truncation skipped path=%s error=%v", r.URL.Path, err)
@@ -198,10 +198,12 @@ func isResponsesRequest(r *http.Request) bool {
 	return r.Method == http.MethodPost && r.URL.Path == "/v1/responses"
 }
 
-// truncateCallIDsInBody shortens every call_id longer than maxLen so upstreams
-// that enforce the 64-char limit accept Cursor's Responses API requests. The
-// truncation is deterministic, so paired function_call / function_call_output
-// ids stay equal after shortening.
+// truncateCallIDsInBody shortens every tool-call id longer than maxLen so
+// upstreams that enforce the 64-char limit accept Cursor's requests. It covers
+// both request shapes: Responses API (call_id) and Chat Completions
+// (tool_calls[].id and tool_call_id). Truncation is deterministic, so ids that
+// must match across a request — function_call/function_call_output call_id, or
+// tool_calls[].id/tool_call_id — stay equal after shortening.
 func truncateCallIDsInBody(body []byte, maxLen int) ([]byte, int, error) {
 	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -223,12 +225,23 @@ func truncateCallIDs(node any, maxLen int) int {
 	switch value := node.(type) {
 	case map[string]any:
 		for key, child := range value {
-			// call_ids are ASCII, so byte slicing is safe.
-			if key == "call_id" {
+			switch key {
+			// Tool-call ids are ASCII, so byte slicing is safe.
+			case "call_id", "tool_call_id": // Responses API, Chat Completions tool results
 				if s, ok := child.(string); ok && len(s) > maxLen {
 					value[key] = s[:maxLen]
 					count++
-					continue
+				}
+			case "tool_calls": // Chat Completions: messages[].tool_calls[].id
+				if items, ok := child.([]any); ok {
+					for _, item := range items {
+						if obj, ok := item.(map[string]any); ok {
+							if s, ok := obj["id"].(string); ok && len(s) > maxLen {
+								obj["id"] = s[:maxLen]
+								count++
+							}
+						}
+					}
 				}
 			}
 			count += truncateCallIDs(child, maxLen)

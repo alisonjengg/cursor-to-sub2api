@@ -2,8 +2,10 @@
 
 A small reverse proxy for routing Cursor's OpenAI-compatible requests to a Sub2API-compatible upstream. It rewrites two request shapes before forwarding:
 
-- `POST /v1/chat/completions` — removes the top-level `user` field.
-- `POST /v1/responses` — truncates any `call_id` longer than 64 characters (the limit many OpenAI-compatible upstreams enforce). Truncation is deterministic, so paired `function_call` / `function_call_output` ids stay equal.
+- `POST /v1/chat/completions` — removes the top-level `user` field, and truncates any tool-call id (`tool_calls[].id`, `tool_call_id`) longer than 64 characters.
+- `POST /v1/responses` — truncates any `call_id` longer than 64 characters.
+
+Truncation is deterministic, so ids that must match within a request (`tool_calls[].id`/`tool_call_id`, or `function_call`/`function_call_output` `call_id`) stay equal. This satisfies upstreams that enforce the 64-char id limit.
 
 Other request paths and response streams are proxied unchanged.
 

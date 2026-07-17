@@ -86,6 +86,34 @@ func TestProxyTruncatesLongCallIDsInResponses(t *testing.T) {
 	}
 }
 
+func TestProxyTruncatesLongToolCallIDsInChatCompletions(t *testing.T) {
+	const longID = "call_0123456789012345678901234567890123456789012345678901234567890123456789" // 74 chars
+	var received map[string]any
+	handler := testProxyHandler(t, func(r *http.Request) *http.Response {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode upstream body: %v", err)
+		}
+		return testResponse(http.StatusOK, "")
+	})
+	body := `{"model":"m","messages":[` +
+		`{"role":"assistant","tool_calls":[{"id":"` + longID + `","type":"function","function":{"name":"f","arguments":"{}"}}]},` +
+		`{"role":"tool","tool_call_id":"` + longID + `","content":"ok"}]}`
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+
+	messages := received["messages"].([]any)
+	callID := messages[0].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)["id"].(string)
+	resultID := messages[1].(map[string]any)["tool_call_id"].(string)
+	if len(callID) != maxCallIDLen {
+		t.Fatalf("tool_call id length = %d, want %d", len(callID), maxCallIDLen)
+	}
+	if callID != resultID {
+		t.Fatalf("paired ids diverged: %q vs %q", callID, resultID)
+	}
+	if callID != longID[:maxCallIDLen] {
+		t.Fatalf("id = %q, want prefix of original", callID)
+	}
+}
+
 func TestProxyRejectsOversizedBody(t *testing.T) {
 	upstreamCalled := false
 	handler := testProxyHandler(t, func(r *http.Request) *http.Response {
