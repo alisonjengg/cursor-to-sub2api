@@ -299,11 +299,14 @@ func newReverseProxy(upstream *url.URL) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
 	originalDirector := proxy.Director
 	proxy.Director = func(r *http.Request) {
-		originalHost := r.Host
 		originalDirector(r)
 		r.Host = upstream.Host
-		if originalHost != "" {
-			r.Header.Set("X-Forwarded-Host", originalHost)
+		// Do not leak the client's IP to the upstream: drop every forwarding
+		// header that carries it so the upstream only sees this server's address.
+		// Setting X-Forwarded-For to nil also stops ReverseProxy from re-adding it.
+		r.Header["X-Forwarded-For"] = nil
+		for _, header := range []string{"X-Real-Ip", "X-Client-Ip", "Cf-Connecting-Ip", "True-Client-Ip", "X-Forwarded-Host", "Forwarded"} {
+			r.Header.Del(header)
 		}
 		r.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 	}

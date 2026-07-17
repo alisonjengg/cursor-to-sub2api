@@ -114,6 +114,26 @@ func TestProxyTruncatesLongToolCallIDsInChatCompletions(t *testing.T) {
 	}
 }
 
+func TestProxyStripsClientIPHeaders(t *testing.T) {
+	var got http.Header
+	handler := testProxyHandler(t, func(r *http.Request) *http.Response {
+		got = r.Header.Clone()
+		return testResponse(http.StatusOK, "")
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{}"))
+	request.RemoteAddr = "203.0.113.7:5555"
+	request.Header.Set("X-Forwarded-For", "203.0.113.7")
+	request.Header.Set("Cf-Connecting-Ip", "203.0.113.7")
+	request.Header.Set("X-Real-Ip", "203.0.113.7")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	for _, header := range []string{"X-Forwarded-For", "Cf-Connecting-Ip", "X-Real-Ip", "True-Client-Ip", "X-Forwarded-Host", "Forwarded"} {
+		if value := got.Get(header); value != "" {
+			t.Errorf("upstream received %s=%q, want empty", header, value)
+		}
+	}
+}
+
 func TestProxyRejectsOversizedBody(t *testing.T) {
 	upstreamCalled := false
 	handler := testProxyHandler(t, func(r *http.Request) *http.Response {
